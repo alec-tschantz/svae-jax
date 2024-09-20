@@ -82,8 +82,6 @@ def meanfield_fixed_point(key, label_global, gaussian_globals, node_potentials, 
         kl, prev_kl = label_kl + gaussian_kl, kl
         if abs(kl - prev_kl) < tol:
             break
-    else:
-        print("iteration limit reached")
 
     return label_stats
 
