@@ -41,3 +41,10 @@ def standard_to_natural(S, m, kappa, nu):
     b = jnp.expand_dims(kappa, -1) * m
     A = S + outer(b, m)
     return pack_dense(A, b, kappa, nu)
+
+
+def expected_standard_params(natparam):
+    S, m, kappa, nu = natural_to_standard(natparam)
+    expected_mean = m
+    expected_covariance = S / kappa
+    return expected_mean, expected_covariance
