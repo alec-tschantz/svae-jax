@@ -96,10 +96,10 @@ def gaussian_meanfield(gaussian_globals, node_potentials, label_stats):
 
 def label_meanfield(label_global, gaussian_globals, gaussian_stats):
     node_potentials = jnp.tensordot(gaussian_stats, gaussian_globals, [[1, 2], [1, 2]])
-    natparam = node_potentials + label_global
-    stats = categorical.expected_stats(natparam)
-    kl = jnp.tensordot(stats, node_potentials) - categorical.log_partition(natparam)
-    return natparam, stats, kl
+    nat_param = node_potentials + label_global
+    stats = categorical.expected_stats(nat_param)
+    kl = jnp.tensordot(stats, node_potentials) - categorical.log_partition(nat_param)
+    return nat_param, stats, kl
 
 
 def initialize_meanfield(key, label_global, node_potentials):

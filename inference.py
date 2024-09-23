@@ -34,6 +34,7 @@ def make_gradfun(
         samples, saved.stats, global_kl, local_kl = run_inference(
             infer_key, pgm_prior, pgm_params, nn_potential, num_samples
         )
+
         return (
             num_batches * decoder(decoder_params, samples, get_batch(i)) - global_kl - num_batches * local_kl
         ) / num_datapoints
