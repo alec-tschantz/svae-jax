@@ -1,67 +1,39 @@
-import jax
-import jax.numpy as jnp
-from jax import random
 from functools import partial
 
-from svae.utils import identity, log1pexp, relu
+
+import jax
+from jax import numpy as jnp, random as jr
+from jax.scipy.special import logsumexp
 
 
-def logits(x):
-    return identity(x)
+identity = lambda x: x
 
 
-def gaussian_mean(x, sigmoid_mean=False):
-    mu_input, sigmasq_input = jnp.split(x, 2, axis=-1)
-    if sigmoid_mean:
-        mu = sigmoid(mu_input)
-    else:
-        mu = mu_input
-    sigmasq = log1pexp(sigmasq_input)
-    return mu, sigmasq
-
-
-# def init_layer(key, d_in, d_out):
-#     key_W, key_b = random.split(key)
-#     W = rand_partial_isometry(key_W, d_in, d_out)
-#     b = random.normal(key_b, shape=(d_out,))
-#     return W, b
-
-
-def init_layer(key, d_in, d_out, scale=1e-2):
-    key_W, key_b = random.split(key)
-    W = scale * random.normal(key_W, shape=(d_in, d_out))
-    b = scale * random.normal(key_b, shape=(d_out,))
+def init_layer(key, d_in, d_out):
+    key_W, key_b = jr.split(key)
+    scale = jnp.sqrt(2.0 / (d_in + d_out))
+    W = scale * jr.normal(key_W, shape=(d_in, d_out))
+    b = jnp.zeros(d_out)
     return W, b
-
-
-def rand_partial_isometry(key, m, n):
-    d = max(m, n)
-    key_matrix = key
-    A = random.normal(key_matrix, shape=(d, d))
-    Q, _ = jnp.linalg.qr(A)
-    return Q[:m, :n]
 
 
 def mlp_forward(params, inputs, activations):
     x = inputs
-    for (W, b), act in zip(params[:-1], activations[:-1]):
+    for (W, b), act in zip(params, activations):
         x = act(jnp.dot(x, W) + b)
-    W_out, b_out = params[-1]
-    x = jnp.dot(x, W_out) + b_out
-    return activations[-1](x)
+    return x
 
 
 def init_mlp(key, d_in, layer_specs):
     num_layers = len(layer_specs)
-    keys = random.split(key, num_layers)
+    keys = jr.split(key, num_layers)
     params = []
     sizes = [d_in] + [size for size, _ in layer_specs]
+    activations = [act for _, act in layer_specs]
 
     for i in range(num_layers):
         W, b = init_layer(keys[i], sizes[i], sizes[i + 1])
         params.append((W, b))
-
-    activations = [act for _, act in layer_specs]
 
     def mlp_fn(params, inputs):
         return mlp_forward(params, inputs, activations)
@@ -69,14 +41,22 @@ def init_mlp(key, d_in, layer_specs):
     return mlp_fn, params
 
 
-def gaussian_loglike(targets, mu, sigmasq):
-    return -0.5 * jnp.sum(((targets - mu) ** 2) / sigmasq + jnp.log(sigmasq) + jnp.log(2 * jnp.pi))
+def binary_cross_entropy(ouput, targets):
+    output = jnp.clip(ouput, 1e-10, 1.0 - 1e-10)
+    bce_loss = -(targets * jnp.log(ouput) + (1 - targets) * jnp.log(1 - ouput))
+    return jnp.sum(bce_loss)
 
 
-def make_loglike(mlp):
-    def loglike(params, inputs, targets):
-        outputs = mlp(params, inputs)
-        mu, sigmasq = outputs
-        return gaussian_loglike(targets, mu, sigmasq)
+def gumbel_softmax(logits, key, temperature=1.0):
+    uniforms = jnp.clip(jr.uniform(key, logits.shape), a_min=1e-10, a_max=1.0)
+    gumbels = -jnp.log(-jnp.log(uniforms))
+    scores = (logits + gumbels) / temperature
+    return jax.nn.softmax(scores, axis=-1)
 
-    return loglike
+
+def onehot_sample(logits, key):
+    B, N, K = logits.shape
+    reshaped_logits = logits.reshape(-1, K)
+    sampled_indices = jr.categorical(key, reshaped_logits, axis=-1)
+    sampled_indices = sampled_indices.reshape(B, N)
+    return jax.nn.one_hot(sampled_indices, K)

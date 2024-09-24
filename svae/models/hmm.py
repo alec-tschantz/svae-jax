@@ -147,13 +147,3 @@ def prior_expected_stats(natparam):
 
 def prior_log_partition(natparam):
     return dirichlet.log_partition(natparam)
-
-
-def gumbel_softmax(key, logits, temperature=1.0, hard=False, num_samples=1):
-    gumbel_noise = jax.random.gumbel(key, shape=(num_samples,) + logits.shape)
-    y = jax.nn.softmax((logits[None, ...] + gumbel_noise) / temperature, axis=-1)
-
-    if hard:
-        y_hard = jax.nn.one_hot(jnp.argmax(y, axis=-1), num_classes=logits.shape[-1])
-        y = jax.lax.stop_gradient(y_hard - y) + y
-    return y
