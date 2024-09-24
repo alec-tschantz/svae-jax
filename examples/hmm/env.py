@@ -19,10 +19,10 @@ class Env:
 
         self.move_deltas = jnp.array(
             [
-                [0, -1],
-                [0, 1],
-                [-1, 0],
-                [1, 0],
+                [0, -2],
+                [0, 2],
+                [-2, 0],
+                [2, 0],
             ],
             dtype=jnp.int32,
         )

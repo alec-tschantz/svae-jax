@@ -34,6 +34,6 @@ def make_gradfun(
         pgm_natgrad = (
             -natgrad_scale / num_datapoints * (flat(pgm_prior) + num_batches * flat(saved.stats) - flat(pgm_params))
         )
-        return unflat(pgm_natgrad), decoder_grad, encoder_grad
+        return (unflat(pgm_natgrad), decoder_grad, encoder_grad), elbo
 
     return gradfun

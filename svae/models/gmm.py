@@ -4,7 +4,7 @@ from svae.utils import unbox, normalize, flat
 from svae.distributions import gaussian, niw, dirichlet, categorical
 
 
-def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_samples):
+def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_samples=1):
     meanfield_key, key = jr.split(key)
     _, stats, local_natparam, local_kl = local_meanfield(meanfield_key, global_natparam, nn_potentials)
     sample_key, key = jr.split(key)

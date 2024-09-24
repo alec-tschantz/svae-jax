@@ -47,6 +47,15 @@ def binary_cross_entropy(ouput, targets):
     return jnp.sum(bce_loss)
 
 
+def make_loglike(mlp):
+
+    def loglike(params, inputs, targets):
+        outputs = mlp(params, inputs)
+        return -binary_cross_entropy(outputs, targets)
+
+    return loglike
+
+
 def gumbel_softmax(logits, key, temperature=1.0):
     uniforms = jnp.clip(jr.uniform(key, logits.shape), a_min=1e-10, a_max=1.0)
     gumbels = -jnp.log(-jnp.log(uniforms))

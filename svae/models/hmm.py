@@ -6,132 +6,72 @@ from svae.utils import flat, unbox
 from svae.distributions import dirichlet
 
 
-def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_samples):
-    stats, local_natparam, local_kl = local_meanfield(global_natparam, nn_potentials)
+def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_samples=1):
     sample_key, key = jr.split(key)
-    samples = gumbel_softmax(sample_key, local_natparam, temperature=1.0, hard=False, num_samples=num_samples)
+    stats, local_natparam, local_kl = local_meanfield(global_natparam, nn_potentials)
+    samples = gumbel_softmax(local_natparam, sample_key)
     global_kl = prior_kl(global_natparam, prior_natparam)
     return samples, unbox(stats), global_kl, local_kl
 
 
-def rollout(key, global_natparam, nn_potential, num_steps):
-    N = global_natparam.shape[0]
-
-    global_params = dirichlet.expected_stats(global_natparam)
-
-    log_transition_probs = jax.nn.log_softmax(global_params, axis=-1)
-    log_q_t = jax.nn.log_softmax(nn_potential)
-    logits = [log_q_t]
-
-    for t in range(1, num_steps):
-        log_q_prev_plus_trans = log_q_t[:, None] + log_transition_probs
-        log_q_t_new = logsumexp(log_q_prev_plus_trans, axis=0)
-        log_q_t_new = log_q_t_new - logsumexp(log_q_t_new)
-        logits.append(log_q_t_new)
-
-    logits = jnp.stack(logits, axis=0)
-    return logits
-
-
 def local_meanfield(global_natparams, node_potentials):
-    B, T, N = node_potentials.shape
+    init_params, trans_params = prior_expected_stats(global_natparams)
 
-    global_params = dirichlet.expected_stats(global_natparams)
-    log_transition_probs = jax.nn.log_softmax(global_params, axis=-1)
-    log_transition_probs = jnp.expand_dims(log_transition_probs, axis=0)
-    log_transition_probs = jnp.repeat(log_transition_probs, B, axis=0)
-
-    log_pi = jnp.full((B, N), -jnp.log(N))
-    log_alpha = forward_filter(log_transition_probs, log_pi, node_potentials)
-
-    log_beta_init = jnp.zeros((B, N))
-    log_beta = backward_smooth(log_transition_probs, node_potentials, log_beta_init)
-
-    log_q_z = log_alpha + log_beta
-    log_q_z = log_q_z - logsumexp(log_q_z, axis=-1, keepdims=True)
-
-    E_q_zzT = compute_local_stats(log_alpha, log_beta, log_transition_probs, node_potentials)
-    local_kl = compute_local_kl(log_q_z, log_transition_probs, node_potentials)
-
-    return E_q_zzT, log_q_z, local_kl
+    alpha = forward_filter(init_params, trans_params, node_potentials)
+    beta = backward_smooth(trans_params, node_potentials)
+    log_post, expected_states, expected_transitions, log_normalizer = expected_statistics(
+        init_params, trans_params, node_potentials, alpha, beta
+    )
+    stats = (expected_states[0], expected_transitions)
+    return stats, log_post, log_normalizer
 
 
-def forward_filter(log_transition_probs, log_pi, node_potentials):
+def forward_filter(init_params, trans_params, node_potentials):
     B, T, N = node_potentials.shape
     log_alpha = jnp.zeros((B, T, N))
-    log_alpha = log_alpha.at[:, 0, :].set(log_pi + node_potentials[:, 0, :])
-
-    def step_forward(t, log_alpha):
-        log_alpha_prev = log_alpha[:, t - 1, :]
-        log_sum = logsumexp(log_alpha_prev[:, :, None] + log_transition_probs, axis=1)
-        log_alpha = log_alpha.at[:, t, :].set(node_potentials[:, t, :] + log_sum)
-        return log_alpha
-
-    log_alpha = jax.lax.fori_loop(1, T, step_forward, log_alpha)
+    log_alpha = log_alpha.at[:, 0, :].set(init_params[None, :] + node_potentials[:, 0, :])
+    for t in range(1, T):
+        trans_probs = log_alpha[:, t - 1, :, None] + trans_params[None, :, :]
+        log_alpha = log_alpha.at[:, t, :].set(node_potentials[:, t, :] + logsumexp(trans_probs, axis=1))
     return log_alpha
 
 
-def backward_smooth(log_transition_probs, node_potentials, log_beta_init):
+def backward_smooth(trans_params, node_potentials):
     B, T, N = node_potentials.shape
     log_beta = jnp.zeros((B, T, N))
-    log_beta = log_beta.at[:, T - 1, :].set(log_beta_init)
-
-    def step_backward(t, log_beta):
-        log_beta_next = log_beta[:, t + 1, :]
-        log_beta_expanded = log_beta_next[:, None, :]
-        node_potentials_expanded = node_potentials[:, t + 1, :][:, None, :]
-        log_sum = logsumexp(log_beta_expanded + log_transition_probs + node_potentials_expanded, axis=2)
-        log_beta = log_beta.at[:, t, :].set(log_sum)
-        return log_beta
-
-    log_beta = jax.lax.fori_loop(T - 2, -1, lambda t, lb: step_backward(t, lb), log_beta)
+    log_beta = log_beta.at[:, T - 1, :].set(0.0)
+    for t in reversed(range(T - 1)):
+        probs = trans_params[None, :, :] + node_potentials[:, t + 1, None, :] + log_beta[:, t + 1, None, :]
+        log_beta = log_beta.at[:, t, :].set(logsumexp(probs, axis=2))
     return log_beta
 
 
-def compute_local_stats(log_alpha, log_beta, log_transition_probs, node_potentials):
-    B, T, N = log_alpha.shape
-
-    def compute_joint(t, E_q_zzT):
-        log_alpha_prev = log_alpha[:, t - 1, :]
-        log_beta_t = log_beta[:, t, :]
-        node_potentials_t = node_potentials[:, t, :]
-
-        log_alpha_prev_expanded = log_alpha_prev[:, :, None]
-        log_beta_t_expanded = log_beta_t[:, None, :]
-        node_potentials_t_expanded = node_potentials_t[:, None, :]
-
-        joint_log = log_alpha_prev_expanded + log_transition_probs + node_potentials_t_expanded + log_beta_t_expanded
-        joint_log -= logsumexp(joint_log, axis=(1, 2), keepdims=True)
-        joint = jnp.exp(joint_log)
-
-        E_q_zzT = E_q_zzT.at[:, t - 1, :, :].set(joint)
-        return E_q_zzT
-
-    E_q_zzT = jnp.zeros((B, T - 1, N, N))
-    E_q_zzT = jax.lax.fori_loop(1, T, compute_joint, E_q_zzT)
-    return E_q_zzT.sum((0, 1))
-
-
-def compute_local_kl(log_q_z, log_transition_probs, node_potentials):
+def expected_statistics(init_params, trans_params, node_potentials, log_alpha, log_beta):
     B, T, N = node_potentials.shape
-
-    log_p_z_t = jnp.full((B, N), -jnp.log(N)) + node_potentials[:, 0, :]
-
-    def forward(t, log_p_z_t):
-        log_p_z_t = logsumexp(log_p_z_t[:, :, None] + log_transition_probs, axis=1) + node_potentials[:, t, :]
-        return log_p_z_t
-
-    log_p_z_t = jax.lax.fori_loop(1, T, forward, log_p_z_t)
-    log_p_z = log_p_z_t - logsumexp(log_p_z_t, axis=-1, keepdims=True)
-    log_p_z_expanded = log_p_z[:, None, :]
-
-    kl_per_element = jnp.exp(log_q_z) * (log_q_z - log_p_z_expanded)
-    return jnp.sum(kl_per_element)
+    log_normalizer = logsumexp(log_alpha[:, T - 1, :], axis=-1)
+    log_posterior = log_alpha + log_beta - log_normalizer[:, None, None]
+    expected_states = jnp.exp(log_posterior)
+    log_transitions = (
+        log_alpha[:, :-1, :, None]
+        + trans_params[None, None, :, :]
+        + node_potentials[:, 1:, None, :]
+        + log_beta[:, 1:, None, :]
+        - log_normalizer[:, None, None, None]
+    )
+    expected_transitions = jnp.exp(log_transitions)
+    expected_transitions_total = expected_transitions.sum(axis=(0, 1))
+    expected_states = expected_states.sum(0)
+    log_normalizer = logsumexp(log_alpha[:, T - 1, :])
+    return log_posterior, expected_states, expected_transitions_total, log_normalizer
 
 
 def init_pgm_param(key, N, alpha):
-    dirichlet_natparam = alpha * jnp.eye(N) + jr.uniform(key, shape=(N, N))
-    return dirichlet_natparam
+    transition_key, key = jr.split(key)
+    transition_natparam = alpha * jnp.eye(N) + jr.uniform(transition_key, shape=(N, N))
+
+    initial_key, key = jr.split(key)
+    initial_natparam = jnp.full(N, 1.0 / N)
+    return initial_natparam, transition_natparam
 
 
 def prior_kl(global_natparam, prior_natparam):
@@ -142,8 +82,18 @@ def prior_kl(global_natparam, prior_natparam):
 
 
 def prior_expected_stats(natparam):
-    return dirichlet.expected_stats(natparam)
+    init_natparam, trans_natparam = natparam
+    trans_stats = jax.vmap(dirichlet.expected_stats, in_axes=1)(trans_natparam)
+    return dirichlet.expected_stats(init_natparam), trans_stats
 
 
 def prior_log_partition(natparam):
-    return dirichlet.log_partition(natparam)
+    init_natparam, trans_natparam = natparam
+    return dirichlet.log_partition(init_natparam) + sum(map(dirichlet.log_partition, trans_natparam))
+
+
+def gumbel_softmax(logits, key, temperature=1.0):
+    uniforms = jnp.clip(jr.uniform(key, logits.shape), a_min=1e-10, a_max=1.0)
+    gumbels = -jnp.log(-jnp.log(uniforms))
+    scores = (logits + gumbels) / temperature
+    return jax.nn.softmax(scores, axis=-1)
