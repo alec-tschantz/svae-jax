@@ -8,14 +8,11 @@ from matplotlib import pyplot as plt
 
 
 class Env:
-    def __init__(self, initial_position: Tuple[int, int] = (3, 3)):
+    def __init__(self):
         self.grid_size = 10
         self.square_size = 2
         self.actions = ["up", "down", "left", "right"]
         self.action_mapping = {"up": 0, "down": 1, "left": 2, "right": 3}
-
-        x, y = initial_position
-        self.initial_position = jnp.array(initial_position)
 
         self.move_deltas = jnp.array(
             [
@@ -32,7 +29,7 @@ class Env:
         actions = jax.vmap(lambda k: jax.random.randint(k, (), 0, 4))(keys)
         actions = actions.reshape((num_samples, length))
 
-        def generate_sample(actions_seq):
+        def generate_sample(actions_seq, key):
             def step(carry, action):
                 pos = carry
                 delta = self.move_deltas[action]
@@ -42,12 +39,14 @@ class Env:
                 updated_pos = jnp.array([new_x, new_y])
                 return updated_pos, updated_pos
 
-            _, positions = jax.lax.scan(step, self.initial_position, actions_seq)
+            initial_key, key = jax.random.split(key)
+            initial_position = jax.random.randint(initial_key, (2,), 0, self.grid_size - self.square_size)
+            _, positions = jax.lax.scan(step, initial_position, actions_seq)
             images = jax.vmap(self._create_image)(positions)
             return images, actions_seq
 
-        generate_sample_vmap = jax.vmap(generate_sample, in_axes=0, out_axes=(0, 0))
-        images, actions = generate_sample_vmap(actions)
+        generate_sample_vmap = jax.vmap(generate_sample, in_axes=(0, None), out_axes=(0, 0))
+        images, actions = generate_sample_vmap(actions, key)
         return images, actions
 
     def _create_image(self, pos: jnp.ndarray) -> jnp.ndarray:

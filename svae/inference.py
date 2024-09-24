@@ -4,7 +4,7 @@ import jax
 from jax.flatten_util import ravel_pytree
 from jax import numpy as jnp, random as jr, value_and_grad, tree_util
 
-from svae.utils import split_into_batches, get_num_datapoints, flat
+from svae.utils import flat
 
 
 def make_gradfun(

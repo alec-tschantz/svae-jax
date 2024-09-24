@@ -142,8 +142,8 @@ def contract(a, b):
 def get_num_datapoints(x):
     if isinstance(x, jnp.ndarray):
         return x.shape[0]
-    elif isinstance(x, list):
-        return sum(get_num_datapoints(item) for item in x)
+    elif isinstance(x, tuple):
+        return get_num_datapoints(x[0])
 
 
 def split_into_batches(key, data, batch_size):
@@ -152,5 +152,13 @@ def split_into_batches(key, data, batch_size):
     num_batches = num_datapoints // batch_size
     indices = jnp.arange(num_datapoints)
     shuffled_indices = jr.permutation(batch_key, indices)
-    batches = [data[shuffled_indices[i * batch_size : (i + 1) * batch_size]] for i in range(num_batches)]
+
+    def batch_data(single_data):
+        return [single_data[shuffled_indices[i * batch_size : (i + 1) * batch_size]] for i in range(num_batches)]
+
+    if isinstance(data, tuple):
+        batches = tuple(batch_data(d) for d in data)
+    else:
+        batches = batch_data(data)
+
     return batches, num_batches
