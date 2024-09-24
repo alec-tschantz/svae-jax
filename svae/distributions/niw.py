@@ -1,8 +1,8 @@
 from jax import numpy as jnp
 from jax.scipy.special import multigammaln, digamma
 
-from utils import symmetrize, outer
-from gaussian import pack_dense, unpack_dense
+from svae.utils import symmetrize, outer
+from svae.distributions.gaussian import pack_dense, unpack_dense
 
 
 def expected_stats(nat_param, eps=1e-8):

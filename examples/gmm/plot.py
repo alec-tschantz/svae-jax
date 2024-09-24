@@ -6,9 +6,9 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 
-from utils import normalize
-import gaussian, niw, dirichlet
-from gmm import make_encoder_decoder
+from svae.utils import normalize
+from svae.distributions import gaussian, niw, dirichlet
+from svae.models.gmm import make_encoder_decoder
 
 
 def make_plotter_2d(key, encode, decode, data, num_clusters, params, plot_every):
@@ -20,13 +20,6 @@ def make_plotter_2d(key, encode, decode, data, num_clusters, params, plot_every)
         encoded_means = encode_mean(data, pgm_params, recogn_params)
         encoded_means_np = np.array(encoded_means)
         ax.plot(encoded_means_np[:, 0], encoded_means_np[:, 1], color="r", marker=".", linestyle="", alpha=0.5)
-
-    def plot_reconstructions(ax, params):
-        pgm_params, loglike_params, recogn_params = params
-        encoded_means = encode_mean(data, pgm_params, recogn_params)
-        decoded_means = decode(loglike_params, encoded_means)[0]
-
-        ax.scatter(-decoded_means[:, 0], decoded_means[:, 1], alpha=0.1, c="r")
 
     def plot_ellipse(ax, alpha, mean, cov):
         alpha = alpha.item()
@@ -63,14 +56,11 @@ def make_plotter_2d(key, encode, decode, data, num_clusters, params, plot_every)
     def plot(i, val, params, grad):
         if (i % plot_every) == (-1 % plot_every):
 
-            fig, (obs_axis, latent_axis) = plt.subplots(1, 2, figsize=(6, 4))
+            fig, ax = plt.subplots(1, 1, figsize=(6, 4))
 
-            obs_axis.axis("off")
-            plot_reconstructions(obs_axis, params)
-
-            latent_axis.axis("off")
-            plot_encoded_means(latent_axis, params)
-            plot_components(latent_axis, params)
+            ax.axis("off")
+            plot_encoded_means(ax, params)
+            plot_components(ax, params)
 
             fig.tight_layout()
             plt.show()

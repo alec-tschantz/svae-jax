@@ -4,8 +4,8 @@ import jax
 from jax.flatten_util import ravel_pytree
 from jax import numpy as jnp, random as jr, value_and_grad, tree_util
 
-import gaussian
-from utils import split_into_batches, get_num_datapoints, flat
+from svae.distributions import gaussian
+from svae.utils import split_into_batches, get_num_datapoints, flat
 
 
 def sgd(key, gradfun, init_params, num_iters, step_size):

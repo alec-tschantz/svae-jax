@@ -2,7 +2,7 @@ from functools import partial
 from jax import numpy as jnp, random as jr
 
 
-from utils import T
+from svae.utils import T
 
 
 def expected_stats(nat_param):

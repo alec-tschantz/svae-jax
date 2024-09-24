@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax import random
 from functools import partial
 
-from utils import identity, log1pexp, relu
+from svae.utils import identity, log1pexp, relu
 
 
 def logits(x):

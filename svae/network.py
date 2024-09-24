@@ -3,7 +3,7 @@ from functools import partial
 from collections import defaultdict
 
 
-from utils import compose, sigmoid, relu, identity, log1pexp, isarray
+from svae.utils import compose, sigmoid, relu, identity, log1pexp, isarray
 
 
 def rand_partial_isometry(key, m, n):

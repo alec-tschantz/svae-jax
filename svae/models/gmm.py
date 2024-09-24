@@ -1,7 +1,7 @@
 from jax import numpy as jnp, random as jr
 
-import gaussian, niw, dirichlet, categorical
-from utils import unbox, normalize, flat
+from svae.utils import unbox, normalize, flat
+from svae.distributions import gaussian, niw, dirichlet, categorical
 
 
 def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_samples):

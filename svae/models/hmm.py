@@ -2,8 +2,8 @@ import jax
 from jax.scipy.special import logsumexp
 from jax import numpy as jnp, random as jr
 
-import dirichlet
-from utils import flat, unbox
+from svae.utils import flat, unbox
+from svae.distributions import dirichlet
 
 
 def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_samples):
