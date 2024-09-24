@@ -11,7 +11,7 @@ from svae.distributions import gaussian, niw, dirichlet
 from svae.models.gmm import make_encoder_decoder
 
 
-def make_plotter_2d(key, encode, decode, data, num_clusters, params, plot_every):
+def make_plotter_2d(key, encode, decode, data, num_clusters, params):
     data_np = np.array(data)
     encode_mean, decode_mean = make_encoder_decoder(key, encode, decode)
 
@@ -53,16 +53,14 @@ def make_plotter_2d(key, encode, decode, data, num_clusters, params, plot_every)
             Sigma_np = np.array(Sigma)
             plot_ellipse(ax, weight_np, mu_np, Sigma_np)
 
-    def plot(i, val, params, grad):
-        if (i % plot_every) == (-1 % plot_every):
+    def plot(params):
+        fig, ax = plt.subplots(1, 1, figsize=(6, 4))
 
-            fig, ax = plt.subplots(1, 1, figsize=(6, 4))
+        ax.axis("off")
+        plot_encoded_means(ax, params)
+        plot_components(ax, params)
 
-            ax.axis("off")
-            plot_encoded_means(ax, params)
-            plot_components(ax, params)
-
-            fig.tight_layout()
-            plt.show()
+        fig.tight_layout()
+        plt.show()
 
     return plot
