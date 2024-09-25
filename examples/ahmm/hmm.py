@@ -1,6 +1,6 @@
 import jax
 from jax.scipy.special import logsumexp
-from jax import numpy as jnp, random as jr
+from jax import numpy as jnp, random as jr, tree_util
 
 from svae.utils import flat, unbox
 from svae.distributions import dirichlet

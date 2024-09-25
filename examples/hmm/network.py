@@ -42,7 +42,8 @@ def init_mlp(key, d_in, layer_specs):
 
 
 def binary_cross_entropy(ouput, targets):
-    output = jnp.clip(ouput, 1e-10, 1.0 - 1e-10)
+    output = jnp.clip(ouput, 1e-8, 1.0 - 1e-8)
+
     bce_loss = -(targets * jnp.log(ouput) + (1 - targets) * jnp.log(1 - ouput))
     return jnp.sum(bce_loss)
 
