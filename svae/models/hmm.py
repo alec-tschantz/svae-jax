@@ -16,13 +16,11 @@ def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_sampl
 
 def local_meanfield(global_natparams, node_potentials):
     init_params, trans_params = prior_expected_stats(global_natparams)
-
     log_alpha = forward_filter(init_params, trans_params, node_potentials)
     log_beta = backward_smooth(trans_params, node_potentials)
     log_posterior, expected_initial, expected_transitions, log_normalizer = expected_statistics(
         init_params, trans_params, node_potentials, log_alpha, log_beta
     )
-
     stats = (expected_initial, expected_transitions)
     return stats, log_posterior, log_normalizer
 
@@ -33,13 +31,9 @@ def forward_filter(init_params, trans_params, node_potentials):
     log_alpha = log_alpha.at[:, 0, :].set(init_params + node_potentials[:, 0, :])
 
     for t in range(1, T):
-        # (B, N, 1) + (1, N, N) = (B, N, N)
         sum_terms = log_alpha[:, t - 1, :, None] + trans_params[None, :, :]
-
-        # (B, N) + (B, N) = (B, N)
         log_alpha_t = logsumexp(sum_terms, axis=1) + node_potentials[:, t, :]
         log_alpha = log_alpha.at[:, t, :].set(log_alpha_t)
-
     return log_alpha
 
 
@@ -48,26 +42,18 @@ def backward_smooth(trans_params, node_potentials):
 
     log_beta = jnp.zeros((B, T, N))
     for t in range(T - 2, -1, -1):
-        # (1, N, N) (B, 1, N) + (B, 1, N) = (B, N, N)
         sum_terms = trans_params[None, :, :] + node_potentials[:, t + 1, None, :] + log_beta[:, t + 1, None, :]
-
-        # (B, N)
         log_beta_t = logsumexp(sum_terms, axis=2)
         log_beta = log_beta.at[:, t, :].set(log_beta_t)
-
     return log_beta
 
 
 def expected_statistics(init_params, trans_params, node_potentials, log_alpha, log_beta):
     B, T, N = node_potentials.shape
 
-    # (B, )
     log_normalizer = logsumexp(log_alpha[:, -1, :], axis=1)
-
-    # (B, T, N)
     log_posterior = log_alpha + log_beta - log_normalizer[:, None, None]
 
-    # (B, T-1, N, 1) + (1, 1, N, N) + (B, T-1, 1, N) - (B, 1, 1, 1) = (B, T-1, N, N)
     log_xi = (
         log_alpha[:, :-1, :, None]
         + trans_params[None, None, :, :]
@@ -76,22 +62,15 @@ def expected_statistics(init_params, trans_params, node_potentials, log_alpha, l
         - log_normalizer[:, None, None, None]
     )
 
-    # (B, T - 1, N, N)
-    expected_transitions = jnp.exp(log_xi)
-    expected_transitions = expected_transitions.sum((0, 1))
-    # (B, T, N)
     posterior = jnp.exp(log_posterior)
-    # (B, N)
-    expected_initial_state = posterior[:, 0, :]
-    expected_initial_state = expected_initial_state.sum(0)
+    expected_transitions = jnp.exp(log_xi).sum((0, 1))
+    expected_initial_state = posterior[:, 0, :].sum(0)
     return log_posterior, expected_initial_state, expected_transitions, log_normalizer.mean()
 
 
 def init_pgm_param(key, N, alpha):
     transition_key, key = jr.split(key)
-    # transition_natparam = alpha * jnp.eye(N) + jr.uniform(transition_key, shape=(N, N))
     transition_natparam = alpha * jnp.ones((N, N))
-
     initial_key, key = jr.split(key)
     initial_natparam = jnp.full(N, 1.0 / N)
     return initial_natparam, transition_natparam
