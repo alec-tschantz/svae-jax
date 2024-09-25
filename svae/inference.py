@@ -13,21 +13,22 @@ def make_gradfun(
     _, unflat = ravel_pytree(pgm_prior)
     saved = lambda: None
 
-    def mc_elbo(key, pgm_params, decoder_params, encoder_params, batch):
+    def mc_elbo(key, pgm_params, decoder_params, encoder_params, batch, *args):
         infer_key, key = jr.split(key)
 
         nn_potential = encoder(encoder_params, batch)
         samples, saved.stats, global_kl, local_kl = run_inference(
-            infer_key, pgm_prior, pgm_params, nn_potential, num_samples
+            infer_key, pgm_prior, pgm_params, nn_potential, num_samples, *args
         )
+
         return (
             num_batches * loglike(decoder_params, samples, batch) - global_kl - num_batches * local_kl
         ) / num_datapoints
 
-    def gradfun(params, batch):
+    def gradfun(params, batch, *args):
         pgm_params, decoder_params, encoder_params = params
         objective = lambda decoder_params, encoder_params: -mc_elbo(
-            key, pgm_params, decoder_params, encoder_params, batch
+            key, pgm_params, decoder_params, encoder_params, batch, *args
         )
         elbo, (decoder_grad, encoder_grad) = value_and_grad(objective, argnums=(0, 1))(decoder_params, encoder_params)
 

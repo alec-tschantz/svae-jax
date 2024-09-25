@@ -6,7 +6,7 @@ from svae.utils import flat, unbox
 from svae.distributions import dirichlet
 
 
-def run_inference(key, prior_natparam, global_natparam, nn_potentials, actions, num_samples=1):
+def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_samples, actions):
     sample_key, key = jr.split(key)
     stats, local_natparam, local_kl = local_meanfield(global_natparam, nn_potentials, actions)
     samples = gumbel_softmax(local_natparam, sample_key)
@@ -14,74 +14,58 @@ def run_inference(key, prior_natparam, global_natparam, nn_potentials, actions, 
     return samples, unbox(stats), global_kl, local_kl
 
 
-# def rollout(natparams, node_potential, actions):
-#     init_params, trans_params = prior_expected_stats(natparams)
-#     T = actions.shape[0]
-
-#     logits = [node_potential + init_params]
-#     for t in range(T - 1):
-#         trans_t = trans_params[actions[t + 1]]
-#         next_logits = logsumexp(logits[-1][:, None] + trans_t, axis=0)
-#         logits.append(next_logits)
-#     return jnp.stack(logits)
-
-
 def rollout(natparams, node_potential, actions):
-    T = actions.shape[0]
-    # check implementation of prior expected stats
     init_params, trans_params = prior_expected_stats(natparams)
+    T = actions.shape[0]
 
-    init_probs = jax.nn.softmax(init_params)
-    node_potential_probs = jax.nn.softmax(node_potential)
-    trans_probs = jax.nn.softmax(trans_params, -1)
-    print("trans_probs")
-    print(trans_probs[0])
-    print(trans_probs[1])
-    print(trans_probs[2])
-    print(trans_probs[3])
-
-    probs = [jax.nn.softmax(node_potential_probs * init_probs * 100)]
-
-    for t in range(T - 1):
-        trans_t = trans_probs[actions[t + 1]]
-        next_probs = probs[-1] @ trans_t
-        next_probs = jax.nn.softmax(next_probs * 100)
-        probs.append(next_probs)
-
-    return jnp.stack(probs)
+    logits = [node_potential + init_params]
+    for t in range(1, T):
+        trans_t = trans_params[actions[t]]
+        next_logits = logsumexp(logits[-1][:, None] + trans_t, axis=0)
+        logits.append(next_logits)
+    return jnp.stack(logits)
 
 
 def local_meanfield(global_natparams, node_potentials, actions):
     init_params, trans_params = prior_expected_stats(global_natparams)
     alpha = forward_filter(init_params, trans_params, node_potentials, actions)
     beta = backward_smooth(trans_params, node_potentials, actions)
-    log_post, expected_states, expected_transitions, log_normalizer = expected_statistics(
+    log_post, expected_initial, expected_transitions, log_normalizer = expected_statistics(
         init_params, trans_params, node_potentials, alpha, beta, actions
     )
-    stats = (expected_states[0], expected_transitions)
+    stats = (expected_initial, expected_transitions)
     return stats, log_post, log_normalizer
 
 
 def forward_filter(init_params, trans_params, node_potentials, actions):
     B, T, N = node_potentials.shape
     log_alpha = jnp.zeros((B, T, N))
-    log_alpha = log_alpha.at[:, 0, :].set(init_params[None, :] + node_potentials[:, 0, :])
-    for t in range(T - 1):
-        trans_t = trans_params[actions[:, t + 1]]
-        trans_probs = log_alpha[:, t, :, None] + trans_t
-        trans_probs = trans_probs + node_potentials[:, t + 1, None, :]
-        log_alpha = log_alpha.at[:, t + 1, :].set(logsumexp(trans_probs, axis=1))
+    log_alpha = log_alpha.at[:, 0, :].set(init_params + node_potentials[:, 0, :])
+
+    for t in range(1, T):
+        # TODO:
+        # trans_t = trans_params[actions[:, t - 1]]
+        trans_t = trans_params[actions[:, t]]
+
+        # (B, N, 1) + (B, N, N) = (B, N, N)
+        sum_terms = log_alpha[:, t - 1, :, None] + trans_t
+
+        # (B, N) + (B, N) = (B, N)
+        log_alpha_t = logsumexp(sum_terms, axis=1) + node_potentials[:, t, :]
+        log_alpha = log_alpha.at[:, t, :].set(log_alpha_t)
     return log_alpha
 
 
 def backward_smooth(trans_params, node_potentials, actions):
     B, T, N = node_potentials.shape
     log_beta = jnp.zeros((B, T, N))
-    log_beta = log_beta.at[:, T - 1, :].set(0.0)
-    for t in reversed(range(T - 1)):
+
+    for t in range(T - 2, -1, -1):
+        # TODO:
+        # trans_t = trans_params[actions[:, t]]
         trans_t = trans_params[actions[:, t + 1]]
-        probs = trans_t + node_potentials[:, t + 1, None, :] + log_beta[:, t + 1, None, :]
-        log_beta = log_beta.at[:, t, :].set(logsumexp(probs, axis=2))
+        sum_terms = trans_t + node_potentials[:, t + 1, None, :] + log_beta[:, t + 1, None, :]
+        log_beta = log_beta.at[:, t, :].set(logsumexp(sum_terms, axis=2))
     return log_beta
 
 
@@ -89,33 +73,37 @@ def expected_statistics(init_params, trans_params, node_potentials, log_alpha, l
     B, T, N = node_potentials.shape
     A = trans_params.shape[0]
 
-    log_normalizer = logsumexp(log_alpha[:, T - 1, :], axis=-1)
+    log_normalizer = logsumexp(log_alpha[:, -1, :], axis=-1)
     log_posterior = log_alpha + log_beta - log_normalizer[:, None, None]
-    expected_states = jnp.exp(log_posterior)
+    posterior = jnp.exp(log_posterior)
 
-    log_transitions = (
+    expected_initial = posterior[:, 0, :].sum(0)
+
+    # TODO:
+    trans_params = trans_params[actions[:, 1:], :, :]
+    # trans_params = trans_params[actions[:, :-1], :, :]
+    log_xi = (
         log_alpha[:, :-1, :, None]
-        + trans_params[actions[:, 1:], :, :]
+        + trans_params
         + node_potentials[:, 1:, None, :]
         + log_beta[:, 1:, None, :]
         - log_normalizer[:, None, None, None]
     )
-    expected_transitions = jnp.exp(log_transitions)
+    expected_transitions = jnp.exp(log_xi)
+
     expected_transitions_flat = expected_transitions.reshape(-1, N, N)
     actions_flat = actions[:, 1:].reshape(-1)
-    expected_transitions_total = jnp.zeros((A, N, N))
-    expected_transitions_total = expected_transitions_total.at[actions_flat, :, :].add(expected_transitions_flat)
 
-    expected_states = expected_states.sum(0)
-    log_normalizer = logsumexp(log_alpha[:, T - 1, :])
-
-    return log_posterior, expected_states, expected_transitions_total, log_normalizer
+    expected_transitions = jnp.zeros((A, N, N))
+    expected_transitions = expected_transitions.at[actions_flat, :, :].add(expected_transitions_flat)
+    # TODO:
+    return log_posterior, expected_initial, expected_transitions, log_normalizer.mean()
 
 
 def init_pgm_param(key, N, A, alpha):
     transition_key, key = jr.split(key)
-    # transition_natparam = alpha * jnp.eye(N)[None, :, :] + jr.uniform(transition_key, shape=(A, N, N))
-    transition_natparam = alpha * jnp.eye(N)[None, :, :] + jnp.ones((A, N, N)) + 1e-9
+    # transition_natparam = alpha * jr.uniform(transition_key, shape=(A, N, N))
+    transition_natparam = alpha * jnp.ones((A, N, N))
     initial_key, key = jr.split(key)
     initial_natparam = jnp.full(N, 1.0 / N)
     return initial_natparam, transition_natparam
