@@ -25,9 +25,11 @@ class Env:
         )
 
     def sample(self, key, num_samples: int, length: int) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        keys = jax.random.split(key, num_samples * length)
-        actions = jax.vmap(lambda k: jax.random.randint(k, (), 0, 4))(keys)
-        actions = actions.reshape((num_samples, length))
+        action_key, key = jax.random.split(key)
+
+        action_keys = jax.random.split(action_key, num_samples * (length + 1))
+        actions = jax.vmap(lambda k: jax.random.randint(k, (), 0, 4))(action_keys)
+        actions = actions.reshape((num_samples, length + 1))
 
         def generate_sample(actions_seq, key):
             def step(carry, action):
@@ -47,7 +49,7 @@ class Env:
 
         generate_sample_vmap = jax.vmap(generate_sample, in_axes=(0, None), out_axes=(0, 0))
         images, actions = generate_sample_vmap(actions, key)
-        return images, actions
+        return images[:, :-1], actions[:, 1:]
 
     def _create_image(self, pos: jnp.ndarray) -> jnp.ndarray:
         x, y = pos
