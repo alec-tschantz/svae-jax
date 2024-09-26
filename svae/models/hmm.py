@@ -114,8 +114,7 @@ def prior_expected_stats(natparam):
 def prior_log_partition(natparam):
     init_natparam, trans_natparam = natparam
     log_partition_init = dirichlet.log_partition(init_natparam)
-    log_partition = lambda trans_natparam_a: dirichlet.log_partition(trans_natparam_a).sum()
-    log_partition_trans = jax.vmap(log_partition)(trans_natparam).sum()
+    log_partition_trans = jax.vmap(lambda a: dirichlet.log_partition(a).sum())(trans_natparam).sum()
     return log_partition_init + log_partition_trans
 
 
