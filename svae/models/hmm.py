@@ -2,7 +2,7 @@ import jax
 from jax.scipy.special import logsumexp
 from jax import numpy as jnp, random as jr, lax, jit, tree_util
 
-from svae.utils import flat, unbox
+from svae.utils import flat, stop_gradient
 from svae.distributions import dirichlet
 
 
@@ -12,7 +12,7 @@ def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_sampl
     stats, local_natparam, local_kl = local_meanfield(global_natparam, nn_potentials, actions)
     samples = gumbel_softmax(local_natparam, sample_key)
     global_kl = prior_kl(global_natparam, prior_natparam)
-    return samples, unbox(stats), global_kl, local_kl
+    return samples, stop_gradient(stats), global_kl, local_kl
 
 
 def local_meanfield(global_natparams, node_potentials, actions):
@@ -84,8 +84,7 @@ def expected_statistics(init_params, trans_params, node_potentials, log_alpha, l
     expected_initial = posterior[:, 0, :].sum(0)
 
     actions_flat = actions[:, :-1].reshape(-1)
-    expected_transitions = jnp.exp(log_xi)
-    expected_transitions_flat = expected_transitions.reshape(-1, N, N)
+    expected_transitions_flat = jnp.exp(log_xi).reshape(-1, N, N)
 
     expected_transitions = jnp.zeros((A, N, N))
     expected_transitions = expected_transitions.at[actions_flat, :, :].add(expected_transitions_flat)
@@ -93,10 +92,8 @@ def expected_statistics(init_params, trans_params, node_potentials, log_alpha, l
 
 
 def init_pgm_param(key, N, A, alpha):
-    transition_key, key = jr.split(key)
-    transition_natparam = alpha * jnp.ones((A, N, N))
-    initial_key, key = jr.split(key)
     initial_natparam = jnp.full(N, 1.0 / N)
+    transition_natparam = alpha * jnp.ones((A, N, N))
     return initial_natparam, transition_natparam
 
 
@@ -110,9 +107,8 @@ def prior_kl(global_natparam, prior_natparam):
 def prior_expected_stats(natparam):
     init_natparam, trans_natparam = natparam
     init_stats = dirichlet.expected_stats(init_natparam)
-    expected_stats = lambda trans_natparam_a: jax.vmap(dirichlet.expected_stats)(trans_natparam_a)
-    expected_stats_trans = jax.vmap(expected_stats)(trans_natparam)
-    return init_stats, expected_stats_trans
+    trans_stats = jax.vmap(lambda a: jax.vmap(dirichlet.expected_stats)(a))(trans_natparam)
+    return init_stats, trans_stats
 
 
 def prior_log_partition(natparam):

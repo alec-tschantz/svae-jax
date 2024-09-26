@@ -1,6 +1,6 @@
 from jax import numpy as jnp, random as jr
 
-from svae.utils import unbox, normalize, flat
+from svae.utils import stop_gradient, normalize, flat
 from svae.distributions import gaussian, niw, dirichlet, categorical
 
 
@@ -10,7 +10,7 @@ def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_sampl
     sample_key, key = jr.split(key)
     samples = gaussian.natural_sample(sample_key, local_natparam[1], num_samples)
     global_kl = prior_kl(global_natparam, prior_natparam)
-    return samples, unbox(stats), global_kl, local_kl
+    return samples, stop_gradient(stats), global_kl, local_kl
 
 
 def init_pgm_param(key, K, N, alpha, niw_conc=10.0, random_scale=0.0):
@@ -50,7 +50,7 @@ def local_meanfield(key, global_natparam, node_potentials):
     label_global = dirichlet.expected_stats(dirichlet_natparam)
     gaussian_globals = niw.expected_stats(niw_natparams)
 
-    label_stats = meanfield_fixed_point(key, label_global, gaussian_globals, unbox(node_potentials))
+    label_stats = meanfield_fixed_point(key, label_global, gaussian_globals, stop_gradient(node_potentials))
 
     gaussian_natparam, gaussian_stats, gaussian_kl = gaussian_meanfield(gaussian_globals, node_potentials, label_stats)
     label_natparam, label_stats, label_kl = label_meanfield(label_global, gaussian_globals, gaussian_stats)
