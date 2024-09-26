@@ -1,28 +1,18 @@
 import jax
 from jax.scipy.special import logsumexp
-from jax import numpy as jnp, random as jr, tree_util
+from jax import numpy as jnp, random as jr, lax, jit, tree_util
 
 from svae.utils import flat, unbox
 from svae.distributions import dirichlet
 
 
+@jit
 def run_inference(key, prior_natparam, global_natparam, nn_potentials, num_samples, actions):
     sample_key, key = jr.split(key)
     stats, local_natparam, local_kl = local_meanfield(global_natparam, nn_potentials, actions)
     samples = gumbel_softmax(local_natparam, sample_key)
     global_kl = prior_kl(global_natparam, prior_natparam)
     return samples, unbox(stats), global_kl, local_kl
-
-
-def rollout(natparams, node_potential, actions):
-    init_params, trans_params = prior_expected_stats(natparams)
-    T = actions.shape[0]
-
-    logits = [node_potential + init_params]
-    for t in range(1, T):
-        next_logits = logsumexp(logits[t - 1][:, None] + trans_params[actions[t - 1]], axis=0)
-        logits.append(next_logits)
-    return jnp.stack(logits)
 
 
 def local_meanfield(global_natparams, node_potentials, actions):
@@ -35,27 +25,44 @@ def local_meanfield(global_natparams, node_potentials, actions):
     return stats, log_posterior, log_normalizer
 
 
+def rollout(natparams, node_potential, actions):
+    init_params, trans_params = prior_expected_stats(natparams)
+
+    def scan_fn(logits_prev, action_t):
+        next_logits = logsumexp(logits_prev[:, None] + trans_params[action_t], axis=0)
+        return next_logits, next_logits
+
+    logits_0 = node_potential + init_params
+    _, logits_seq = lax.scan(scan_fn, logits_0, actions[:-1])
+    return jnp.concatenate([logits_0[None, :], logits_seq], axis=0)
+
+
 def forward_filter(init_params, trans_params, node_potentials, actions):
     B, T, N = node_potentials.shape
-    log_alpha = jnp.zeros((B, T, N))
-    log_alpha = log_alpha.at[:, 0, :].set(init_params + node_potentials[:, 0, :])
 
-    for t in range(1, T):
-        sum_terms = log_alpha[:, t - 1, :, None] + trans_params[actions[:, t - 1]]
+    def scan_fn(log_alpha_prev, t):
+        sum_terms = log_alpha_prev[:, :, None] + trans_params[actions[:, t - 1]]
         log_alpha_t = logsumexp(sum_terms, axis=1) + node_potentials[:, t, :]
-        log_alpha = log_alpha.at[:, t, :].set(log_alpha_t)
-    return log_alpha
+        return log_alpha_t, log_alpha_t
+
+    log_alpha_0 = init_params + node_potentials[:, 0, :]
+    _, log_alpha_seq = lax.scan(scan_fn, log_alpha_0, jnp.arange(1, T))
+    log_alpha = jnp.concatenate([log_alpha_0[None, :, :], log_alpha_seq], axis=0)
+    return log_alpha.swapaxes(0, 1)
 
 
 def backward_smooth(trans_params, node_potentials, actions):
     B, T, N = node_potentials.shape
-    log_beta = jnp.zeros((B, T, N))
 
-    for t in range(T - 2, -1, -1):
-        trans_t = trans_params[actions[:, t]]
-        sum_terms = trans_t + node_potentials[:, t + 1, None, :] + log_beta[:, t + 1, None, :]
-        log_beta = log_beta.at[:, t, :].set(logsumexp(sum_terms, axis=2))
-    return log_beta
+    def scan_fn(log_beta_next, t):
+        sum_terms = trans_params[actions[:, t]] + node_potentials[:, t + 1, None, :] + log_beta_next[:, None, :]
+        log_beta_t = logsumexp(sum_terms, axis=2)
+        return log_beta_t, log_beta_t
+
+    log_beta_T = jnp.zeros((B, N))
+    _, log_beta_seq = lax.scan(scan_fn, log_beta_T, jnp.arange(T - 2, -1, -1))
+    log_beta = jnp.concatenate([log_beta_seq[::-1], log_beta_T[None, :, :]], axis=0)
+    return log_beta.swapaxes(0, 1)
 
 
 def expected_statistics(init_params, trans_params, node_potentials, log_alpha, log_beta, actions):
